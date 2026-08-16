@@ -1,0 +1,1356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Kuncen serialises access to one shared resource: one person holds the lock, everyone else waits in an ordered queue.">
+<meta name="color-scheme" content="dark light">
+<title>Kuncen</title>
+
+<style>
+/* ── Tokens ───────────────────────────────────────────────────────────────
+   Dark-first, because the product's own interface is. Brand palette:
+   Deep Indigo #1B3A5C carries structure, Brushed Gold #D4AF8A carries every
+   action, Accent Dark sits behind it all. Status colours stay deliberately
+   separate from gold so a held lock never reads as a warning.            */
+:root {
+  --ground:      #0b1724;
+  --ground-deep: #071019;
+  --panel:       #12253a;
+  --panel-2:     #172f49;
+  --line:        #21405e;
+  --line-soft:   #1a3149;
+  --ink:         #e7edf4;
+  --ink-dim:     #b6c6d6;
+  --muted:       #8ba0b6;
+  --gold:        #d4af8a;
+  --gold-bright: #ecd3b6;
+  --gold-ink:    #d4af8a;
+  --on-gold:     #0b1724;
+  --mark-body:   #e7edf4;
+  --free:        #5fd79b;
+  --held:        #8fb2d2;
+  --drain:       #e8b96a;
+  --dead:        #f08a8a;
+  --grid:        rgba(212,175,138,.055);
+  --shadow:      0 24px 60px -30px rgba(0,0,0,.85);
+
+  --font-display: "Helvetica Neue", "Segoe UI", Roboto, "Helvetica", Arial, sans-serif;
+  --font-body: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Times New Roman", serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Consolas", "Liberation Mono", monospace;
+
+  --col: 68ch;
+  --pad: clamp(20px, 5vw, 48px);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --ground:      #e9edf2;
+    --ground-deep: #dde4ec;
+    --panel:       #f8fafc;
+    --panel-2:     #eff3f8;
+    --line:        #c6d3e0;
+    --line-soft:   #d8e1ea;
+    --ink:         #0f1e2e;
+    --ink-dim:     #29405a;
+    --muted:       #5c7488;
+    --gold:        #b98b57;
+    --gold-bright: #8a6540;
+    --gold-ink:    #8a6540;
+    --on-gold:     #fdfaf6;
+    --mark-body:   #1b3a5c;
+    --free:        #1c8a5a;
+    --held:        #3d6d9c;
+    --drain:       #9a6c14;
+    --dead:        #b3423f;
+    --grid:        rgba(27,58,92,.05);
+    --shadow:      0 24px 50px -34px rgba(15,30,46,.45);
+  }
+}
+:root[data-theme="light"] {
+  --ground:      #e9edf2;
+  --ground-deep: #dde4ec;
+  --panel:       #f8fafc;
+  --panel-2:     #eff3f8;
+  --line:        #c6d3e0;
+  --line-soft:   #d8e1ea;
+  --ink:         #0f1e2e;
+  --ink-dim:     #29405a;
+  --muted:       #5c7488;
+  --gold:        #b98b57;
+  --gold-bright: #8a6540;
+  --gold-ink:    #8a6540;
+  --on-gold:     #fdfaf6;
+  --mark-body:   #1b3a5c;
+  --free:        #1c8a5a;
+  --held:        #3d6d9c;
+  --drain:       #9a6c14;
+  --dead:        #b3423f;
+  --grid:        rgba(27,58,92,.05);
+  --shadow:      0 24px 50px -34px rgba(15,30,46,.45);
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 18px/1.68 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::selection { background: var(--gold); color: var(--on-gold); }
+
+a { color: var(--gold-ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { color: var(--gold-bright); }
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  text-transform: uppercase;
+  text-wrap: balance;
+  margin: 0;
+}
+h1 { font-size: clamp(38px, 7.4vw, 78px); line-height: .96; letter-spacing: .02em; }
+h2 { font-size: clamp(26px, 3.6vw, 40px); line-height: 1.06; letter-spacing: .045em; }
+h3 { font-size: 15px; line-height: 1.3; letter-spacing: .09em; }
+p  { margin: 0; }
+
+code, kbd, pre { font-family: var(--font-mono); }
+
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: var(--gold-ink);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line), transparent);
+}
+
+.lede { font-size: clamp(19px, 2.1vw, 22px); line-height: 1.6; color: var(--ink-dim); }
+.small { font-size: 16px; color: var(--muted); line-height: 1.62; }
+
+.wrap {
+  max-width: 1180px;
+  margin-inline: auto;
+  padding-inline: var(--pad);
+}
+.col { max-width: var(--col); }
+
+section { padding-block: clamp(70px, 11vh, 130px); }
+.stack { display: flex; flex-direction: column; gap: 26px; }
+.stack-sm { display: flex; flex-direction: column; gap: 14px; }
+
+/* ── The mark ───────────────────────────────────────────────────────────── */
+.mark { display: block; width: 100%; height: auto; }
+.mark .ripple { animation: ripple 4.2s ease-in-out infinite; transform-origin: 184px 214px; }
+@keyframes ripple {
+  0%, 62%, 100% { opacity: .16; }
+  30%           { opacity: .48; }
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--ground);
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid transparent;
+  transition: border-color .3s ease, background .3s ease;
+}
+.topbar.stuck { border-bottom-color: var(--line-soft); }
+.topbar .wrap {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 62px;
+}
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--ink); }
+.brand .mark { width: 34px; }
+.brand b {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+}
+.topbar nav { margin-left: auto; display: flex; align-items: center; gap: 22px; }
+.topbar nav a {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--muted);
+}
+.topbar nav a:hover { color: var(--ink); }
+@media (max-width: 720px) { .topbar nav .hide-sm { display: none; } }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 22px;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: transparent;
+  transition: border-color .2s ease, color .2s ease, background .2s ease, transform .2s ease;
+}
+.btn:hover { border-color: var(--gold); color: var(--gold-ink); transform: translateY(-1px); }
+.btn-gold {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: var(--on-gold);
+}
+.btn-gold:hover { background: var(--gold-bright); border-color: var(--gold-bright); color: var(--on-gold); }
+.btn svg { width: 17px; height: 17px; fill: currentColor; flex: none; }
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+.hero {
+  position: relative;
+  padding-block: clamp(52px, 9vh, 104px) clamp(70px, 12vh, 130px);
+  overflow: hidden;
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 88px 88px,
+    linear-gradient(180deg, var(--grid) 1px, transparent 1px) 0 0 / 88px 88px;
+  mask-image: radial-gradient(120% 90% at 62% 34%, #000 0%, transparent 72%);
+  pointer-events: none;
+}
+.hero .wrap { position: relative; }
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
+  gap: clamp(28px, 5vw, 68px);
+  align-items: center;
+}
+.hero-mark { width: min(360px, 82%); justify-self: center; }
+@media (max-width: 860px) {
+  .hero-grid { grid-template-columns: 1fr; }
+  .hero-mark { order: -1; width: min(230px, 60%); justify-self: start; }
+}
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(30px, 4.6vw, 46px);
+  letter-spacing: .34em;
+  text-transform: uppercase;
+  line-height: 1;
+  margin-left: .1em;
+}
+.hero h1 { margin-top: 6px; }
+.hero h1 .thin { color: var(--gold-ink); }
+.cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
+
+/* the little live chip under the hero copy */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px 7px 11px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: .04em;
+  color: var(--ink-dim);
+  align-self: flex-start;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--held); flex: none; }
+.dot.live { box-shadow: 0 0 0 0 currentColor; animation: pulse 2.4s ease-out infinite; color: var(--held); }
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent); }
+  70%  { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* ── Rules / hairlines ──────────────────────────────────────────────────── */
+.rule { height: 1px; background: var(--line-soft); border: 0; margin: 0; }
+
+/* ── Pull quote ─────────────────────────────────────────────────────────── */
+.pull {
+  border-left: 2px solid var(--gold);
+  padding: 4px 0 4px 26px;
+  font-size: clamp(21px, 2.6vw, 27px);
+  line-height: 1.42;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.pull cite {
+  display: block;
+  margin-top: 14px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-style: normal;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── Walkthrough ────────────────────────────────────────────────────────── */
+.walk { position: relative; }
+.walk-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(24px, 5vw, 64px);
+  align-items: start;
+}
+.walk-steps { display: flex; flex-direction: column; }
+.step {
+  min-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding-block: 30px;
+  opacity: .28;
+  transition: opacity .45s ease;
+}
+.step.on { opacity: 1; }
+.step-n {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: .1em;
+  color: var(--gold-ink);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.step-n b { font-weight: 400; }
+.step-n span {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.step h3 {
+  font-size: clamp(20px, 2.4vw, 27px);
+  line-height: 1.16;
+  letter-spacing: -.005em;
+  text-transform: none;
+}
+.step p { color: var(--ink-dim); font-size: 17.5px; }
+
+.panel-sticky { position: sticky; top: 96px; }
+
+/* the mock dashboard */
+.dash {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.dash-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel-2);
+}
+.dash-head .mark { width: 20px; }
+.dash-head b {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.dash-head .tick {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.dash-body { padding: 20px 16px 18px; display: flex; flex-direction: column; gap: 18px; }
+
+.state-line { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: .16em;
+  border: 1px solid currentColor;
+  transition: color .35s ease;
+}
+.pill[data-status="FREE"]     { color: var(--free); }
+.pill[data-status="HELD"]     { color: var(--held); }
+.pill[data-status="DRAINING"] { color: var(--drain); }
+.pill .dot { background: currentColor; }
+.holder { font-family: var(--font-body); font-size: 19px; color: var(--ink); }
+.holder em { font-style: normal; color: var(--muted); }
+
+.rows { display: flex; flex-direction: column; gap: 0; }
+.row {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-soft);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+.row > b {
+  font-weight: 400;
+  font-size: 10.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.queue-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; align-items: center; }
+.qitem {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  background: var(--ground);
+  font-size: 12px;
+  animation: qin .35s ease both;
+}
+.qitem i { font-style: normal; color: var(--gold-ink); }
+@keyframes qin { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+.empty { color: var(--muted); font-size: 12.5px; }
+
+.meter { display: flex; flex-direction: column; gap: 6px; }
+.meter-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.meter-track { height: 4px; background: var(--ground); border: 1px solid var(--line-soft); overflow: hidden; }
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--held);
+  transition: width .6s cubic-bezier(.4,0,.2,1), background-color .4s ease;
+}
+.meter.off .meter-fill { background: var(--line); }
+.meter.off .meter-top { opacity: .55; }
+.meter.hot .meter-fill { background: var(--drain); }
+.meter.over .meter-fill { background: var(--dead); }
+
+.log {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  min-height: 3.4em;
+}
+.log .k { color: var(--gold-ink); flex: none; }
+.log .t { color: var(--ink-dim); }
+
+@media (max-width: 900px) {
+  .walk-grid { grid-template-columns: 1fr; gap: 0; }
+  /* Stacked, the panel has to come first — source order would otherwise
+     park it after all seven steps, where it explains nothing. */
+  .panel-sticky {
+    order: -1;
+    top: 62px;
+    z-index: 20;
+    padding-block: 10px;
+    background: var(--ground);
+  }
+  .walk-steps { margin-top: 4px; }
+  .step { min-height: 62vh; opacity: .5; }
+  .dash-body { padding: 14px 14px 12px; gap: 12px; }
+  .dash-head { padding: 10px 14px; }
+  .row { padding: 7px 0; }
+  .log { min-height: 4.6em; }
+}
+
+/* ── Rule cards ─────────────────────────────────────────────────────────── */
+/* Hairlines come from the cards themselves, not from a gap showing the
+   container through: a trailing empty cell would otherwise render as a
+   solid block where the grid runs out of content. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0;
+  background: var(--ground);
+  border-top: 1px solid var(--line-soft);
+  border-left: 1px solid var(--line-soft);
+}
+.card {
+  background: var(--ground);
+  border-right: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  padding: 26px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  transition: background .25s ease;
+}
+.card:hover { background: var(--panel); }
+.card h3 {
+  color: var(--ink);
+  font-size: 18.5px;
+  line-height: 1.24;
+  letter-spacing: -.005em;
+  text-transform: none;
+}
+.card p { font-size: 16.5px; line-height: 1.6; color: var(--muted); }
+.card .tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--gold-ink);
+}
+
+/* ── Code ───────────────────────────────────────────────────────────────── */
+.code {
+  border: 1px solid var(--line);
+  background: var(--ground-deep);
+  overflow: hidden;
+}
+.code-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.code-head .status {
+  margin-left: auto;
+  color: var(--drain);
+  letter-spacing: .14em;
+}
+.code pre {
+  margin: 0;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.66;
+  color: var(--ink-dim);
+  tab-size: 2;
+}
+.code pre .c { color: var(--muted); }
+.code pre .s { color: var(--gold-ink); }
+.code pre .n { color: var(--held); }
+.code pre .p { color: var(--free); }
+.code pre .cmd { color: var(--ink); }
+
+.two-up {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+/* ── Architecture diagram ───────────────────────────────────────────────── */
+.arch { overflow-x: auto; padding-block: 8px 6px; }
+.arch svg { display: block; min-width: 620px; max-width: 820px; width: 100%; height: auto; }
+.arch .box { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+.arch .box-gold { fill: var(--panel); stroke: var(--gold); stroke-width: 1.4; }
+.arch .lbl { fill: var(--ink); font-family: var(--font-display); font-size: 13px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+.arch .sub { fill: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+.arch .note { fill: var(--gold-ink); font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; }
+.arch .flow { stroke: var(--line); stroke-width: 1.2; fill: none; }
+.arch .flow-gold { stroke: var(--gold); stroke-width: 1.4; fill: none; }
+.arch .cap { fill: var(--muted); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; }
+
+/* ── Facts ──────────────────────────────────────────────────────────────── */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0;
+  background: var(--ground);
+  border-block: 1px solid var(--line-soft);
+}
+.fact {
+  background: var(--ground);
+  border-right: 1px solid var(--line-soft);
+  padding: 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.fact b {
+  font-family: var(--font-display);
+  font-size: clamp(24px, 3vw, 32px);
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--gold-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.fact span {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── Closing ────────────────────────────────────────────────────────────── */
+.close { background: var(--panel); border-top: 1px solid var(--line-soft); }
+.close h2 { font-size: clamp(28px, 4vw, 46px); }
+
+footer {
+  border-top: 1px solid var(--line-soft);
+  padding-block: 40px 52px;
+  background: var(--ground);
+}
+.foot-grid { display: flex; flex-wrap: wrap; gap: 24px 40px; align-items: flex-end; justify-content: space-between; }
+.gloss { max-width: 46ch; font-size: 15.5px; color: var(--muted); line-height: 1.6; }
+.gloss b { color: var(--ink-dim); font-weight: 400; font-style: italic; }
+
+/* ── Reveal ─────────────────────────────────────────────────────────────── */
+.rv { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.3,1); }
+.rv.in { opacity: 1; transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  .rv { opacity: 1; transform: none; }
+  .step { opacity: 1; }
+}
+</style>
+</head>
+<body>
+<header class="topbar" id="topbar">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg class="mark" viewBox="0 0 640 430" aria-hidden="true">
+        <circle cx="184" cy="214" r="131" fill="none" stroke="var(--gold)" stroke-width="9"/>
+        <circle cx="184" cy="214" r="126" fill="var(--mark-body)"/>
+        <circle cx="184" cy="214" r="57" fill="none" stroke="var(--gold)" stroke-width="6"/>
+        <circle cx="184" cy="214" r="25" fill="var(--gold)"/>
+        <rect x="340" y="176" width="204" height="66" fill="var(--mark-body)" stroke="var(--gold)" stroke-width="7"/>
+        <rect x="506" y="250" width="116" height="152" fill="var(--mark-body)" stroke="var(--gold)" stroke-width="7"/>
+      </svg>
+      <b>Kuncen</b>
+    </a>
+    <nav>
+      <a href="#problem" class="hide-sm">The bet</a>
+      <a href="#walk" class="hide-sm">How it works</a>
+      <a href="#rules" class="hide-sm">Rules</a>
+      <a href="https://github.com/awirayaksa/kuncen" target="_blank" rel="noopener">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ── Hero ─────────────────────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div class="stack">
+        <div class="wordmark">Kuncen</div>
+        <h1>One&nbsp;holder.<br>One&nbsp;queue.<br><span class="thin">No arguments.</span></h1>
+        <p class="lede col">
+          One box. Four people. Throughput is fine for one user at a time and falls
+          apart under concurrency. Kuncen serialises access to it: exactly one person
+          holds an exclusive lock, everyone else waits in an ordered queue, and the
+          handoff happens on a rule rather than an argument in chat.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-gold" href="https://github.com/awirayaksa/kuncen" target="_blank" rel="noopener">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+            View on GitHub
+          </a>
+          <a class="btn" href="#walk">Watch the lock change hands</a>
+        </div>
+        <div class="chip">
+          <span class="dot live" id="heroDot"></span>
+          <span id="heroChip">LOCK · HELD by Alice · idle 04:12 / 05:00</span>
+        </div>
+      </div>
+
+      <svg class="mark hero-mark" viewBox="0 0 640 430" role="img" aria-label="The Kuncen mark: a key drawn as a ringed bow, a shaft and a tooth.">
+        <line x1="70" y1="20" x2="284" y2="20" stroke="var(--gold)" stroke-width="6" stroke-linecap="square" opacity=".85"/>
+        <g fill="none" stroke="var(--gold)" stroke-width="1.4">
+          <circle class="ripple" style="animation-delay:0s"     cx="184" cy="214" r="138"/>
+          <circle class="ripple" style="animation-delay:.14s"   cx="184" cy="214" r="143"/>
+          <circle class="ripple" style="animation-delay:.28s"   cx="184" cy="214" r="148"/>
+          <circle class="ripple" style="animation-delay:.42s"   cx="184" cy="214" r="153"/>
+          <circle class="ripple" style="animation-delay:.56s"   cx="184" cy="214" r="158"/>
+          <circle class="ripple" style="animation-delay:.70s"   cx="184" cy="214" r="163"/>
+          <circle class="ripple" style="animation-delay:.84s"   cx="184" cy="214" r="168"/>
+        </g>
+        <circle cx="184" cy="214" r="131" fill="none" stroke="var(--gold)" stroke-width="9"/>
+        <circle cx="184" cy="214" r="126" fill="var(--mark-body)"/>
+        <circle cx="184" cy="214" r="57" fill="none" stroke="var(--gold)" stroke-width="6"/>
+        <circle cx="184" cy="214" r="25" fill="var(--gold)"/>
+        <rect x="340" y="176" width="204" height="66" fill="var(--mark-body)" stroke="var(--gold)" stroke-width="7"/>
+        <rect x="506" y="250" width="116" height="152" fill="var(--mark-body)" stroke="var(--gold)" stroke-width="7"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ── The bet ──────────────────────────────────────────────────────────── -->
+<section id="problem">
+  <div class="wrap stack">
+    <div class="eyebrow rv">The bet</div>
+    <div class="two-up">
+      <div class="stack rv">
+        <h2>A semaphore has<br>no defensible&nbsp;N</h2>
+        <p class="small">
+          Two concurrent <em>heavy</em> requests is exactly the pathology we are
+          eliminating — so N&nbsp;=&nbsp;2 is not a compromise, it is the problem
+          with extra steps. And a semaphore cannot tell a one-line question from a
+          30,000-token agentic run, so no value of N describes the load it is
+          supposed to be limiting.
+        </p>
+        <p class="small">
+          So Kuncen takes the other option: strict exclusive access. The price is
+          that the GPU will sometimes sit near-idle under lock. That is a bet, and
+          it is a measurable one — every session records who held it, for how long,
+          how many requests they sent, and how much of that hold the box was
+          actually busy. After two weeks the logs answer it.
+        </p>
+      </div>
+      <blockquote class="pull rv">
+        “If the logs show frequent queueing with low utilization, revisit.”
+        <cite>PLAN.md — The bet</cite>
+      </blockquote>
+    </div>
+  </div>
+</section>
+
+<!-- ── Walkthrough ──────────────────────────────────────────────────────── -->
+<section id="walk" class="walk">
+  <div class="wrap stack">
+    <div class="eyebrow rv">The lock changing hands</div>
+    <div class="col rv">
+      <h2>Scroll it through<br>one full handoff</h2>
+      <p class="small" style="margin-top:14px">
+        Seven ticks of the sweeper, which runs inside the proxy once a second. The
+        panel is the state it is reading and writing.
+      </p>
+    </div>
+
+    <div class="walk-grid" style="margin-top:22px">
+      <div class="walk-steps" id="steps">
+
+        <article class="step" data-step="0">
+          <div class="step-n"><b>01</b> <span>Free</span></div>
+          <h3>Nobody holds it</h3>
+          <p>The queue is empty, the lock is <code>FREE</code>, and the sweeper has nothing to do. It still ticks — every second, transactionally, taking the current time as a parameter rather than reading a clock of its own.</p>
+        </article>
+
+        <article class="step" data-step="1">
+          <div class="step-n"><b>02</b> <span>Acquire</span></div>
+          <h3>Alice presses Request access</h3>
+          <p>The lock is free, so she gets it on the spot. The write is <code>UPDATE lock_state … WHERE status = 'FREE'</code> inside an immediate transaction, with the affected row count checked — two people clicking in the same second must not both win.</p>
+        </article>
+
+        <article class="step" data-step="2">
+          <div class="step-n"><b>03</b> <span>Queue</span></div>
+          <h3>Bob presses it too</h3>
+          <p>He is appended at position 1, and Alice's browser says <em>Bob is requesting access</em> — the whole social contract is that she hands it over, and she cannot do that if nobody tells her. Pressing it twice is a no-op; an impatient double-click must not send you to the back.</p>
+        </article>
+
+        <article class="step" data-step="3">
+          <div class="step-n"><b>04</b> <span>Timers arm</span></div>
+          <h3>Now the clocks start mattering</h3>
+          <p>The timers are contention-gated: they only run while somebody is waiting. And idle is measured retroactively — Alice went to lunch eight minutes ago, so she is already past the five-minute line the instant Bob arrives. An absent holder does not get a fresh five minutes for showing up to nothing.</p>
+        </article>
+
+        <article class="step" data-step="4">
+          <div class="step-n"><b>05</b> <span>Draining</span></div>
+          <h3>DRAINING, not a guillotine</h3>
+          <p>New requests get <code>423</code> immediately, but anything already streaming is allowed to finish — up to a 120-second ceiling. Without the ceiling a single <code>max_tokens: 100000</code> generation could stretch a session arbitrarily past its cap, which defeats the cap.</p>
+        </article>
+
+        <article class="step" data-step="5">
+          <div class="step-n"><b>06</b> <span>Kill</span></div>
+          <h3>Close the upstream, not just the client</h3>
+          <p>At the ceiling the proxy aborts the connection <em>to the model</em>. Dropping only the client would leave the GPU generating a reply nobody will ever read, on time that now belongs to Bob — he would get exclusive access to a box secretly still working on Alice's prompt.</p>
+        </article>
+
+        <article class="step" data-step="6">
+          <div class="step-n"><b>07</b> <span>Promote</span></div>
+          <h3>Bob has it, on the same tick</h3>
+          <p>No accept step and no claim window: the sweeper promotes the queue head the moment the lock frees. If Bob is away, the ordinary idle timeout passes it along to whoever is next. One timer, one rule.</p>
+        </article>
+
+      </div>
+
+      <div class="panel-sticky">
+        <div class="dash">
+          <div class="dash-head">
+            <svg class="mark" viewBox="0 0 640 430" aria-hidden="true">
+              <circle cx="184" cy="214" r="131" fill="none" stroke="var(--gold)" stroke-width="9"/>
+              <circle cx="184" cy="214" r="126" fill="var(--mark-body)"/>
+              <circle cx="184" cy="214" r="57" fill="none" stroke="var(--gold)" stroke-width="6"/>
+              <circle cx="184" cy="214" r="25" fill="var(--gold)"/>
+              <rect x="340" y="176" width="204" height="66" fill="var(--mark-body)" stroke="var(--gold)" stroke-width="7"/>
+              <rect x="506" y="250" width="116" height="152" fill="var(--mark-body)" stroke="var(--gold)" stroke-width="7"/>
+            </svg>
+            <b>Dashboard</b>
+            <span class="tick"><span class="dot live" style="color:var(--free);background:var(--free)"></span> sweeper 1s</span>
+          </div>
+          <div class="dash-body">
+            <div class="state-line">
+              <span class="pill" id="pill" data-status="FREE"><span class="dot"></span><span id="pillText">FREE</span></span>
+              <span class="holder" id="holder"><em>Available to use</em></span>
+            </div>
+
+            <div class="rows">
+              <div class="row">
+                <b>Queue</b>
+                <div class="queue-list" id="queue"><span class="empty">empty</span></div>
+              </div>
+              <div class="row">
+                <b>In flight</b>
+                <div id="inflight">0 requests</div>
+              </div>
+              <div class="row">
+                <b>Backend</b>
+                <div style="color:var(--free)">up · /health answered 200</div>
+              </div>
+            </div>
+
+            <div class="meter off" id="mIdle">
+              <div class="meter-top"><span>Idle timeout</span><span id="mIdleVal">not running</span></div>
+              <div class="meter-track"><div class="meter-fill" style="width:0%"></div></div>
+            </div>
+            <div class="meter off" id="mCap">
+              <div class="meter-top"><span>Session cap</span><span id="mCapVal">not running</span></div>
+              <div class="meter-track"><div class="meter-fill" style="width:0%"></div></div>
+            </div>
+            <div class="meter off" id="mDrain">
+              <div class="meter-top"><span>Drain ceiling</span><span id="mDrainVal">—</span></div>
+              <div class="meter-track"><div class="meter-fill" style="width:0%"></div></div>
+            </div>
+
+            <div class="log">
+              <span class="k" id="logType">events</span>
+              <span class="t" id="logText">Waiting for someone to ask.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ── Rules ────────────────────────────────────────────────────────────── -->
+<section id="rules">
+  <div class="wrap stack">
+    <div class="eyebrow rv">Load-bearing rules</div>
+    <div class="col rv">
+      <h2>Break one and the<br>lock is decorative</h2>
+      <p class="small" style="margin-top:14px">
+        Every one of these exists because the obvious alternative fails in a way
+        that is quiet, plausible, and unfair to somebody.
+      </p>
+    </div>
+
+    <div class="cards rv" style="margin-top:8px">
+      <div class="card">
+        <span class="tag">Correctness</span>
+        <h3>Absolute timestamps, never countdowns</h3>
+        <p>Every deadline is an epoch millisecond, and the sweeper tick takes the time as an argument. A restart, a suspended VM or a nine-hour gap between ticks produces exactly the same state as a punctual one.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Fairness</span>
+        <h3>Timers only run under contention</h3>
+        <p>With nobody waiting, expiring a lock accomplishes nothing except sending the holder back to a web page to press a button and resume what they were already doing. The timers exist to stop one person starving the others — so they run when there is somebody to starve.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Streaming</span>
+        <h3>In-flight suspends the idle clock</h3>
+        <p><code>last_activity_at</code> is stamped when the last token flushes, not when the request starts. A six-minute agentic generation must not drop the lock out from under itself. Only the session cap can ever catch you mid-stream.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Honesty</span>
+        <h3>An open tab is not usage</h3>
+        <p>Polling the dashboard does not reset anything, and there is no “extend me” button. With one, the queue would stop advancing at the only moment it matters.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Clients</span>
+        <h3>423, never 429</h3>
+        <p><code>openai-python</code> silently auto-retries a 429, turning a clean “you're queued” into a hang and then a failure. A 423 fails fast and legibly, carrying <code>Retry-After</code>, the current holder, and your position in the body.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Privacy</span>
+        <h3>Prompts are never logged</h3>
+        <p>The proxy sees every prompt your colleagues write. The lock machinery records only structured metadata it built itself. Full request tracing exists for debugging, but it is off by default, announces itself in a banner the whole time it runs, and needs a restart rather than a checkbox.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Admin</span>
+        <h3>Override leaves a name</h3>
+        <p>A force-release requires a written reason and shows up on the dashboard. Not for audit — for friction. There is no queue reordering and no handing the lock to a named person, because that turns a mechanical system into a political one.</p>
+      </div>
+      <div class="card">
+        <span class="tag">Operations</span>
+        <h3>Health has three states</h3>
+        <p><em>Up</em>, <em>down</em>, and <em>unknown</em>. “We found nowhere to ask” is not “it is dead” — an OpenAI-compatible gateway happily 404s <code>/health</code> while serving inference, and a badge that cries wolf gets ignored. Backend health is shown separately from lock state, so “it's broken” and “it's taken” never look alike.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ── Client view ──────────────────────────────────────────────────────── -->
+<section id="client">
+  <div class="wrap stack">
+    <div class="eyebrow rv">What your tools see</div>
+    <div class="two-up">
+      <div class="stack rv">
+        <h2>Paste the key once.<br>Never touch it again.</h2>
+        <p class="small">
+          The API key answers <em>who you are</em>; the lock answers <em>whether you
+          may go right now</em>. Keeping those separate is what lets Cline, a script
+          or plain <code>curl</code> be configured a single time instead of
+          re-pasting a token every session.
+        </p>
+        <div class="code">
+          <div class="code-head">shell</div>
+<pre><span class="cmd">export</span> OPENAI_BASE_URL=<span class="s">http://spark.local:8080/v1</span>
+<span class="cmd">export</span> OPENAI_API_KEY=<span class="s">kuncen_…</span></pre>
+        </div>
+        <p class="small">
+          The proxy will not enqueue you. Joining the queue is a deliberate button
+          press on the dashboard, always — so the waiting list is a list of people
+          who actually want the box, not of retry loops.
+        </p>
+      </div>
+
+      <div class="stack rv">
+        <div class="code">
+          <div class="code-head">Response <span class="status">423 Locked</span></div>
+<pre>{
+  <span class="s">"error"</span>: {
+    <span class="s">"message"</span>: <span class="s">"Kuncen: the DGX Spark is held by
+                 Alice. You are #2 of 3 in the queue."</span>,
+    <span class="s">"type"</span>: <span class="s">"kuncen_locked"</span>
+  },
+  <span class="s">"kuncen"</span>: {
+    <span class="s">"status"</span>: <span class="s">"HELD"</span>,
+    <span class="s">"holder"</span>: <span class="s">"Alice"</span>,
+    <span class="s">"expires_in_seconds"</span>: <span class="n">240</span>,
+    <span class="s">"expiry_reason"</span>: <span class="s">"idle"</span>,
+    <span class="s">"queue_position"</span>: <span class="n">2</span>,
+    <span class="s">"queue_length"</span>: <span class="n">3</span>,
+    <span class="s">"dashboard"</span>: <span class="s">"http://spark.local:3000"</span>
+  }
+}</pre>
+        </div>
+        <p class="small">
+          <code>/v1/models</code> and <code>/health</code> need a key but not the
+          lock. Everything else under <code>/v1/*</code> needs both.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ── Architecture ─────────────────────────────────────────────────────── -->
+<section id="build">
+  <div class="wrap stack">
+    <div class="eyebrow rv">Under the hood</div>
+    <div class="stack rv col">
+        <h2>Two processes,<br>one SQLite file</h2>
+        <p class="small">
+          The proxy holds streaming connections open for minutes; the dashboard
+          churns for months. Under one process, every CSS tweak restarts the thing
+          currently streaming somebody's generation. So the enforcing half is small,
+          boring, and left alone.
+        </p>
+        <p class="small">
+          The sweeper lives inside the proxy for the same kind of reason: if the
+          sweeper is dead the proxy is dead, so nothing can reach the resource
+          anyway. There is no state in which locks quietly stop expiring while
+          people are still burning GPU time — the failure is total and obvious
+          rather than partial and unfair.
+        </p>
+      </div>
+
+      <div class="arch rv">
+        <svg viewBox="0 0 660 400" role="img" aria-label="Diagram: clients authenticate to kuncen-proxy on port 8080 with a bearer key; browsers reach kuncen-web on port 3000 with a session cookie; both processes share one SQLite database, and only the proxy talks to the upstream model on localhost port 8000.">
+          <text class="cap" x="0" y="14">CLIENTS · CLINE, SCRIPTS, CURL</text>
+          <text class="cap" x="380" y="14">BROWSERS</text>
+          <path class="flow-gold" d="M60 24 L60 62"/>
+          <path class="flow" d="M440 24 L440 62"/>
+          <text class="note" x="70" y="48">Bearer kuncen_…</text>
+          <text class="cap" x="450" y="48">session cookie</text>
+
+          <rect class="box-gold" x="0" y="64" width="290" height="104"/>
+          <text class="lbl" x="18" y="94">kuncen-proxy</text>
+          <text class="sub" x="18" y="116">:8080  ·  /v1/*</text>
+          <text class="sub" x="18" y="136">enforces the lock</text>
+          <text class="sub" x="18" y="154">runs the sweeper, every 1s</text>
+
+          <rect class="box" x="370" y="64" width="290" height="104"/>
+          <text class="lbl" x="388" y="94">kuncen-web</text>
+          <text class="sub" x="388" y="116">:3000</text>
+          <text class="sub" x="388" y="136">dashboard, queue, profile</text>
+          <text class="sub" x="388" y="154">admin and force-release</text>
+
+          <path class="flow-gold" d="M145 168 L145 214 L300 214 L300 246"/>
+          <path class="flow" d="M515 168 L515 214 L420 214 L420 246"/>
+          <path class="flow-gold" d="M60 168 L60 300"/>
+
+          <rect class="box" x="248" y="248" width="224" height="62"/>
+          <text class="lbl" x="266" y="276">kuncen.db</text>
+          <text class="sub" x="266" y="296">SQLite, WAL</text>
+
+          <rect class="box" x="0" y="302" width="200" height="62"/>
+          <text class="lbl" x="18" y="330">upstream</text>
+          <text class="sub" x="18" y="350">127.0.0.1:8000 · vLLM</text>
+
+          <text class="note" x="0" y="388">unreachable from the LAN — that is what makes the lock real</text>
+        </svg>
+    </div>
+  </div>
+</section>
+
+<div class="facts rv">
+  <div class="fact"><b>1s</b><span>Sweeper tick</span></div>
+  <div class="fact"><b>112</b><span>Tests</span></div>
+  <div class="fact"><b>0</b><span>Build steps</span></div>
+  <div class="fact"><b>0</b><span>Bundlers</span></div>
+  <div class="fact"><b>1</b><span>SQLite file</span></div>
+  <div class="fact"><b>423</b><span>Never 429</span></div>
+</div>
+
+<!-- ── Not just GPUs ────────────────────────────────────────────────────── -->
+<section id="resource">
+  <div class="wrap stack">
+    <div class="eyebrow rv">What it guards</div>
+    <div class="two-up">
+      <div class="stack rv">
+        <h2>The resource is<br>a parameter</h2>
+        <p class="small">
+          Kuncen began as a lock on one DGX Spark, but nothing in the lock, the
+          queue or the timers knows what sits behind the proxy. Name it once and it
+          reaches the login page, the dashboard headlines, the browser
+          notifications, and the 423 body a blocked tool prints.
+        </p>
+        <p class="small">
+          The article is a separate setting because English does not survive a
+          find-and-replace: <em>the DGX Spark is free</em> and <em>Build Server 3 is
+          free</em> are both correct and differ by more than the noun.
+        </p>
+      </div>
+      <div class="code rv">
+        <div class="code-head">.env</div>
+<pre><span class="c"># a GPU box</span>
+KUNCEN_RESOURCE_NAME=<span class="s">DGX Spark</span>
+KUNCEN_RESOURCE_ARTICLE=<span class="s">the</span>
+
+<span class="c"># or anything else that speaks HTTP</span>
+KUNCEN_RESOURCE_NAME=<span class="s">Build Server 3</span>
+KUNCEN_RESOURCE_ARTICLE=
+
+KUNCEN_UPSTREAM=<span class="s">http://127.0.0.1:8000</span>
+KUNCEN_DB=<span class="s">./data/kuncen.db</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Get it ───────────────────────────────────────────────────────────── -->
+<section class="close">
+  <div class="wrap stack">
+    <div class="eyebrow rv">Run it</div>
+    <div class="two-up">
+      <div class="stack rv">
+        <h2>Four commands<br>to a working lock</h2>
+        <p class="small">
+          Node 22, one SQLite file, no build step and no linter — both services run
+          TypeScript straight through <code>tsx</code>. Accounts are provisioned by
+          hand; each one prints a password and an API key exactly once.
+        </p>
+        <div class="cta-row" style="margin-top:6px">
+          <a class="btn btn-gold" href="https://github.com/awirayaksa/kuncen" target="_blank" rel="noopener">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+            github.com/awirayaksa/kuncen
+          </a>
+        </div>
+      </div>
+      <div class="code rv">
+        <div class="code-head">first run</div>
+<pre><span class="cmd">git clone</span> https://github.com/awirayaksa/kuncen
+<span class="cmd">npm install</span>
+<span class="cmd">npm run</span> migrate
+<span class="cmd">npm run</span> admin -- user add alice@example.com Alice --admin
+
+<span class="c"># then, in two terminals</span>
+<span class="cmd">npm run</span> start:proxy   <span class="c"># :8080</span>
+<span class="cmd">npm run</span> start:web     <span class="c"># :3000</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap foot-grid">
+    <div class="stack-sm">
+      <a class="brand" href="#top">
+        <svg class="mark" viewBox="0 0 640 430" aria-hidden="true">
+          <circle cx="184" cy="214" r="131" fill="none" stroke="var(--gold)" stroke-width="9"/>
+          <circle cx="184" cy="214" r="126" fill="var(--mark-body)"/>
+          <circle cx="184" cy="214" r="57" fill="none" stroke="var(--gold)" stroke-width="6"/>
+          <circle cx="184" cy="214" r="25" fill="var(--gold)"/>
+          <rect x="340" y="176" width="204" height="66" fill="var(--mark-body)" stroke="var(--gold)" stroke-width="7"/>
+          <rect x="506" y="250" width="116" height="152" fill="var(--mark-body)" stroke="var(--gold)" stroke-width="7"/>
+        </svg>
+        <b>Kuncen</b>
+      </a>
+      <p class="gloss">
+        <b>kuncèn</b> — Javanese for the keeper of a place, the person trusted with
+        the key. From <b>kunci</b>: key.
+      </p>
+    </div>
+    <div class="stack-sm" style="align-items:flex-start">
+      <a class="btn" href="https://github.com/awirayaksa/kuncen" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        Source, PLAN.md and all
+      </a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ── Header hairline once you leave the hero ──────────────────────────── */
+  var topbar = document.getElementById("topbar");
+  var onScroll = function () {
+    topbar.classList.toggle("stuck", window.scrollY > 12);
+  };
+  onScroll();
+  window.addEventListener("scroll", onScroll, { passive: true });
+
+  /* ── Reveal on entry ──────────────────────────────────────────────────── */
+  var revealables = document.querySelectorAll(".rv");
+  if ("IntersectionObserver" in window && !reduced) {
+    var rio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add("in"); rio.unobserve(e.target); }
+      });
+    }, { rootMargin: "0px 0px -12% 0px", threshold: 0.08 });
+    revealables.forEach(function (el) { rio.observe(el); });
+  } else {
+    revealables.forEach(function (el) { el.classList.add("in"); });
+  }
+
+  /* ── The walkthrough ──────────────────────────────────────────────────────
+     One entry per step. Meter values are the shipped defaults: idle 300s,
+     session cap 3600s, drain ceiling 120s.                                  */
+  var STATES = [
+    {
+      status: "FREE", holder: null, queue: [], inflight: 0,
+      idle: null, cap: null, drain: null,
+      log: ["events", "Waiting for someone to ask."]
+    },
+    {
+      status: "HELD", holder: "Alice", queue: [], inflight: 0,
+      idle: { off: true, val: "queue empty" },
+      cap:  { off: true, val: "queue empty" },
+      drain: null,
+      log: ["granted", "Alice acquired the lock — conditional write, 1 row affected."]
+    },
+    {
+      status: "HELD", holder: "Alice", queue: ["Bob"], inflight: 1,
+      idle: { pct: 0, val: "streaming — suspended" },
+      cap:  { pct: 18, val: "10:48 of 60:00" },
+      drain: null,
+      log: ["access_requested", "Bob is requesting access. Filed under Alice — the only person who can act on it."]
+    },
+    {
+      status: "HELD", holder: "Alice", queue: ["Bob"], inflight: 0,
+      idle: { pct: 100, over: true, val: "8:04 of 5:00 — over" },
+      cap:  { pct: 30, val: "18:12 of 60:00" },
+      drain: null,
+      log: ["expiry_warning", "Idle measured retroactively from the last flushed token."]
+    },
+    {
+      status: "DRAINING", holder: "Alice", queue: ["Bob"], inflight: 1,
+      idle: null, cap: null,
+      drain: { pct: 42, hot: true, val: "0:50 of 2:00" },
+      log: ["released", "Reason: idle. New requests now get 423; one generation is still streaming."]
+    },
+    {
+      status: "DRAINING", holder: "Alice", queue: ["Bob"], inflight: 0,
+      idle: null, cap: null,
+      drain: { pct: 100, over: true, val: "ceiling reached" },
+      log: ["killed", "Upstream connection aborted, not just the client socket."]
+    },
+    {
+      status: "HELD", holder: "Bob", queue: [], inflight: 0,
+      idle: { off: true, val: "queue empty" },
+      cap:  { off: true, val: "queue empty" },
+      drain: null,
+      log: ["granted", "The DGX Spark is now available to use. Sent to Bob, and to nobody else."]
+    }
+  ];
+
+  var el = {
+    pill: document.getElementById("pill"),
+    pillText: document.getElementById("pillText"),
+    holder: document.getElementById("holder"),
+    queue: document.getElementById("queue"),
+    inflight: document.getElementById("inflight"),
+    logType: document.getElementById("logType"),
+    logText: document.getElementById("logText")
+  };
+
+  var meters = {
+    idle:  { box: document.getElementById("mIdle"),  val: document.getElementById("mIdleVal"),  idleLabel: "not running" },
+    cap:   { box: document.getElementById("mCap"),   val: document.getElementById("mCapVal"),   idleLabel: "not running" },
+    drain: { box: document.getElementById("mDrain"), val: document.getElementById("mDrainVal"), idleLabel: "—" }
+  };
+
+  function paintMeter(name, spec) {
+    var m = meters[name];
+    var fill = m.box.querySelector(".meter-fill");
+    if (!spec) {
+      m.box.className = "meter off";
+      m.val.textContent = m.idleLabel;
+      fill.style.width = "0%";
+      return;
+    }
+    m.box.className = "meter" + (spec.off ? " off" : "") + (spec.hot ? " hot" : "") + (spec.over ? " over" : "");
+    m.val.textContent = spec.val;
+    fill.style.width = (spec.off ? 0 : (spec.pct || 0)) + "%";
+  }
+
+  var current = -1;
+  function render(i) {
+    if (i === current) return;
+    current = i;
+    var s = STATES[i];
+
+    el.pill.setAttribute("data-status", s.status);
+    el.pillText.textContent = s.status;
+
+    el.holder.innerHTML = s.holder
+      ? "held by <strong>" + s.holder + "</strong>"
+      : "<em>Available to use</em>";
+
+    if (s.queue.length === 0) {
+      el.queue.innerHTML = '<span class="empty">empty</span>';
+    } else {
+      el.queue.innerHTML = s.queue.map(function (n, k) {
+        return '<span class="qitem"><i>#' + (k + 1) + '</i> ' + n + "</span>";
+      }).join("");
+    }
+
+    el.inflight.textContent = s.inflight === 1 ? "1 request — streaming" : s.inflight + " requests";
+
+    paintMeter("idle", s.idle);
+    paintMeter("cap", s.cap);
+    paintMeter("drain", s.drain);
+
+    el.logType.textContent = s.log[0];
+    el.logText.textContent = s.log[1];
+  }
+
+  render(0);
+
+  var steps = Array.prototype.slice.call(document.querySelectorAll(".step"));
+  if ("IntersectionObserver" in window) {
+    var sio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        var i = Number(e.target.getAttribute("data-step"));
+        steps.forEach(function (s, k) { s.classList.toggle("on", k === i); });
+        render(i);
+      });
+    }, { rootMargin: "-45% 0px -45% 0px", threshold: 0 });
+    steps.forEach(function (s) { sio.observe(s); });
+  } else {
+    steps.forEach(function (s) { s.classList.add("on"); });
+  }
+
+  /* ── Hero chip: a lock quietly running down ───────────────────────────── */
+  var chip = document.getElementById("heroChip");
+  var heroDot = document.getElementById("heroDot");
+  if (chip && !reduced) {
+    var left = 252;
+    setInterval(function () {
+      left -= 1;
+      if (left < 0) { left = 300; }
+      if (left > 60) {
+        var m = Math.floor(left / 60), sec = left % 60;
+        chip.textContent = "LOCK · HELD by Alice · idle 0" +
+          m + ":" + (sec < 10 ? "0" : "") + sec + " / 05:00";
+        heroDot.style.color = heroDot.style.background = "var(--held)";
+      } else {
+        chip.textContent = "LOCK · HELD by Alice · expires in ~" + left + "s";
+        heroDot.style.color = heroDot.style.background = "var(--drain)";
+      }
+    }, 1000);
+  }
+})();
+</script>
+</body>
+</html>
