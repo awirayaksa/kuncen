@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-label="Kuncen">
+  <title>Kuncen</title>
+  <rect width="640" height="640" fill="#0f1e2e"/>
+  <g transform="translate(-6.47 85.42) scale(0.9673)">
+    <g fill="#d4af8a">
+      <circle cx="184" cy="214" r="131"/>
+      <rect x="300" y="176" width="244" height="66"/>
+      <rect x="506" y="250" width="116" height="152"/>
+    </g>
+    <circle cx="184" cy="214" r="44" fill="#0f1e2e"/>
+  </g>
+</svg>

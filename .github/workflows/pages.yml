@@ -1,0 +1,42 @@
+# Publishes site/ to GitHub Pages.
+#
+# Branch-based Pages can only serve the repo root or /docs, and neither is the
+# right home for a one-page showcase. Uploading the folder as an artifact keeps
+# it at site/ and off the root.
+#
+# One-time setup: Settings -> Pages -> Source: GitHub Actions, then set the
+# custom domain to kuncen.awsystem.net.
+name: Deploy showcase
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/public/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deploy that is already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/public
+      - id: deployment
+        uses: actions/deploy-pages@v4

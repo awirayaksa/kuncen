@@ -1,0 +1,34 @@
+{
+  // Static-assets-only Worker: there is no `main`, because nothing here needs
+  // to run server-side. Cloudflare serves the files in `public/` directly.
+  //
+  // The assets live in a subdirectory rather than beside this file on purpose.
+  // Wrangler writes its local state to `.wrangler/` next to the config, so
+  // pointing `directory` at "." would put that state — and this file — inside
+  // the published asset root, and would send `wrangler dev` into an endless
+  // reload loop watching its own scratch files.
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "kuncen",
+  "compatibility_date": "2026-08-16",
+
+  // The showcase must be reachable at exactly one hostname. Leaving
+  // workers.dev on would publish a second, fully crawlable copy at
+  // kuncen.<subdomain>.workers.dev, splitting ranking signals with the
+  // canonical URL for no benefit.
+  "workers_dev": false,
+  "routes": [{ "pattern": "kuncen.awsystem.net", "custom_domain": true }],
+
+  "assets": {
+    "directory": "./public",
+
+    // "/" serves index.html; "/index.html" redirects to "/". One URL per page,
+    // which is what the canonical tag claims.
+    "html_handling": "auto-trailing-slash",
+
+    // Deliberately not "single-page-application": that rewrites every unknown
+    // path to index.html and answers 200, so typos and dead links become soft
+    // 404s that Google will happily index. "none" returns a real 404.
+    // Swap to "404-page" if you add a branded public/404.html.
+    "not_found_handling": "none"
+  }
+}
