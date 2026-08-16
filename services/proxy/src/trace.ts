@@ -174,3 +174,16 @@ export function extractModel(head: string): string | null {
 export function extractStreamFlag(head: string): boolean {
   return /"stream"\s*:\s*true/.test(head);
 }
+
+/**
+ * The reasoning effort the client asked for. The key is not standardised, so
+ * the three spellings seen in the wild are accepted: `reasoning_effort`,
+ * top-level `effort`, and `reasoning: { effort: … }`. The last two are both
+ * matched by the same pattern, since `"effort"` appears quoted in either spot.
+ */
+export function extractEffort(head: string): string | null {
+  const m = /"reasoning_effort"\s*:\s*"([^"\\]{1,120})"/.exec(head);
+  if (m) return m[1] ?? null;
+  const e = /"effort"\s*:\s*"([^"\\]{1,120})"/.exec(head);
+  return e?.[1] ?? null;
+}

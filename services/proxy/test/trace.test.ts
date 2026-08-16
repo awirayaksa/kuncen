@@ -115,6 +115,22 @@ describe('request tracing', () => {
     assert.ok((row?.completionTokens ?? 0) > 0, 'metering still works through the tap');
   });
 
+  it('lifts the reasoning effort whichever key the client used', async () => {
+    const cases = [
+      { reasoning_effort: 'low' },
+      { effort: 'medium' },
+      { reasoning: { effort: 'high' } },
+    ];
+    for (const extra of cases) {
+      await post({ model: 'qwen', ...extra, messages: [{ role: 'user', content: 'go' }] });
+      await settle();
+    }
+    const rows = listTraces(db, { userId: alice.id });
+    assert.equal(rows[0]?.effort, 'high', 'reasoning.effort');
+    assert.equal(rows[1]?.effort, 'medium', 'top-level effort');
+    assert.equal(rows[2]?.effort, 'low', 'reasoning_effort');
+  });
+
   it('records a streamed reply frame by frame', async () => {
     const res = await post({ model: 'qwen', stream: true, messages: [{ role: 'user', content: 'go' }] });
     const delivered = await res.text();

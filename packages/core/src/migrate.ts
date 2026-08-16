@@ -111,6 +111,13 @@ const MIGRATIONS: string[] = [
   CREATE INDEX request_traces_user ON request_traces(user_id, id);
   CREATE INDEX request_traces_started_at ON request_traces(started_at);
   `,
+
+  // v3 — reasoning effort, lifted from the request head like `model`/`streamed`.
+  // The field name is not standardised across clients, so it is one free-form
+  // column and the proxy is what decides which key it came from.
+  `
+  ALTER TABLE request_traces ADD COLUMN effort TEXT;
+  `,
 ];
 
 export function migrate(sqlite: Database.Database): void {

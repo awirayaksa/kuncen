@@ -458,7 +458,7 @@ ${opts.tracing
             (t) => html`<tr>
         <td class="muted small">${when(t.startedAt)}</td>
         <td class="mono small">${t.path}</td>
-        <td class="small">${t.model ?? '–'}${t.streamed ? html` <span class="muted">stream</span>` : ''}</td>
+        <td class="small">${t.model ?? '–'}${t.effort ? html` <span class="muted">· ${t.effort}</span>` : ''}${t.streamed ? html` <span class="muted">stream</span>` : ''}</td>
         <td class="small">${String(t.promptTokens)} → ${String(t.completionTokens)}</td>
         <td class="small">${t.durationMs === null ? '–' : fmtDuration(t.durationMs)}</td>
         <td class="small muted">${bytes(t.requestBytes + t.responseBytes)}${t.truncated ? ' *' : ''}</td>
@@ -515,6 +515,7 @@ export function tracePage(opts: TraceDetailOptions) {
     <div><div class="k">Who</div><div class="v" style="font-size:15px">${t.userName}</div></div>
     <div><div class="k">When</div><div class="v" style="font-size:15px">${when(t.startedAt)}</div></div>
     <div><div class="k">Model</div><div class="v" style="font-size:15px">${t.model ?? '–'}</div></div>
+    <div><div class="k">Effort</div><div class="v" style="font-size:15px">${t.effort ?? '–'}</div></div>
     <div><div class="k">Took</div><div class="v" style="font-size:15px">${t.durationMs === null ? '–' : fmtDuration(t.durationMs)}</div></div>
     <div><div class="k">Tokens</div><div class="v" style="font-size:15px">${String(t.promptTokens)} → ${String(t.completionTokens)}</div></div>
     <div><div class="k">Result</div><div class="v" style="font-size:15px">${outcomeBadge(t)}</div></div>

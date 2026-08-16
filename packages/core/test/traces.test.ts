@@ -48,6 +48,7 @@ describe('trace rows', () => {
     });
     finishTrace(db, id, {
       model: 'llama-3',
+      effort: 'high',
       streamed: true,
       status: 200,
       outcome: 'ok',
@@ -61,6 +62,7 @@ describe('trace rows', () => {
 
     const row = traceById(db, id);
     assert.equal(row?.model, 'llama-3');
+    assert.equal(row?.effort, 'high');
     assert.equal(row?.streamed, true);
     assert.equal(row?.outcome, 'ok');
     assert.equal(row?.completionTokens, 40);

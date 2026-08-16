@@ -152,6 +152,9 @@ export const requestTraces = sqliteTable(
     path: text('path').notNull(),
     /** Lifted from the request JSON, purely so the list is scannable. */
     model: text('model'),
+    /** Reasoning effort the client asked for. Free-form: `reasoning_effort`,
+     *  `effort` and `reasoning.effort` all land here. */
+    effort: text('effort'),
     streamed: integer('streamed', { mode: 'boolean' }).notNull().default(false),
     status: integer('status'),
     outcome: text('outcome', {

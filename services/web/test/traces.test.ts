@@ -70,6 +70,7 @@ describe('trace access', () => {
     }
     finishTrace(db, traceId, {
       model: 'qwen',
+      effort: 'high',
       status: 200,
       outcome: 'ok',
       requestFile: reqRel,
@@ -85,6 +86,7 @@ describe('trace access', () => {
     assert.match(html, /ALICE SECRET PROMPT/);
     assert.match(html, /ALICE SECRET REPLY/);
     assert.match(html, /qwen/);
+    assert.match(html, /high/, 'the client-chosen effort is shown');
   });
 
   it('refuses a colleague, by page and by raw body alike', async () => {

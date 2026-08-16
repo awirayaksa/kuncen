@@ -25,7 +25,7 @@ import {
 } from '@kuncen/core';
 import { InFlightRegistry, KuncenAbort } from './inflight';
 import { meteredStream } from './usage';
-import { BodySink, drainToSink, extractModel, extractStreamFlag, tappedStream } from './trace';
+import { BodySink, drainToSink, extractEffort, extractModel, extractStreamFlag, tappedStream } from './trace';
 
 export interface ProxyOptions {
   db: Db;
@@ -250,6 +250,7 @@ async function forward(c: Context<Env>, opts: ProxyOptions): Promise<Response> {
     try {
       finishTrace(db, traceId, {
         model: extractModel(reqSink?.head ?? ''),
+        effort: extractEffort(reqSink?.head ?? ''),
         streamed: extractStreamFlag(reqSink?.head ?? ''),
         status: fields.status ?? null,
         outcome: fields.outcome,

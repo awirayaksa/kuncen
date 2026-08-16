@@ -37,6 +37,7 @@ export function startTrace(db: Db, input: TraceStartInput): number {
 
 export interface TraceFinishInput {
   model?: string | null;
+  effort?: string | null;
   streamed?: boolean;
   status?: number | null;
   outcome?: TraceOutcome;
@@ -60,6 +61,7 @@ export function finishTrace(db: Db, id: number, input: TraceFinishInput): void {
     .set({
       endedAt: input.endedAt ?? now(),
       model: input.model ?? null,
+      effort: input.effort ?? null,
       streamed: input.streamed ?? false,
       status: input.status ?? null,
       outcome: input.outcome ?? null,
@@ -89,6 +91,7 @@ const withUser = {
   method: requestTraces.method,
   path: requestTraces.path,
   model: requestTraces.model,
+  effort: requestTraces.effort,
   streamed: requestTraces.streamed,
   status: requestTraces.status,
   outcome: requestTraces.outcome,
