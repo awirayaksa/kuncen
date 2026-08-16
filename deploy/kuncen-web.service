@@ -1,0 +1,26 @@
+[Unit]
+Description=kuncen-web — dashboard for the DGX Spark lock
+Documentation=file:///opt/kuncen/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kuncen
+Group=kuncen
+WorkingDirectory=/opt/kuncen
+EnvironmentFile=/opt/kuncen/.env
+ExecStart=/usr/bin/npx tsx services/web/src/index.ts
+Restart=always
+RestartSec=2
+
+# Restarting this one is cheap and expected — it is the half that will churn for
+# months. Nothing here holds a streaming connection.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/kuncen/data
+
+[Install]
+WantedBy=multi-user.target

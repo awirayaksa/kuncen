@@ -1,0 +1,12 @@
+{
+  "name": "@kuncen/proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@kuncen/core": "*",
+    "hono": "^4.6.14"
+  }
+}

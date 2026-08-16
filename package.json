@@ -1,0 +1,31 @@
+{
+  "name": "kuncen",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Exclusive-access manager for the DGX Spark",
+  "workspaces": [
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "migrate": "node --env-file-if-exists=.env --import tsx packages/core/bin/migrate.ts",
+    "admin": "node --env-file-if-exists=.env --import tsx packages/core/bin/kuncen-admin.ts",
+    "start:proxy": "node --env-file-if-exists=.env --import tsx services/proxy/src/index.ts",
+    "start:web": "node --env-file-if-exists=.env --import tsx services/web/src/index.ts",
+    "dev:proxy": "node --env-file-if-exists=.env --watch --import tsx services/proxy/src/index.ts",
+    "dev:web": "node --env-file-if-exists=.env --watch --import tsx services/web/src/index.ts",
+    "dev:fake-vllm": "node --env-file-if-exists=.env --import tsx tools/fake-vllm.ts",
+    "test": "node --import tsx --test packages/core/test/*.test.ts services/proxy/test/*.test.ts services/web/test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

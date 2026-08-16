@@ -1,0 +1,29 @@
+[Unit]
+Description=kuncen-proxy — exclusive access enforcement for the DGX Spark
+Documentation=file:///opt/kuncen/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kuncen
+Group=kuncen
+WorkingDirectory=/opt/kuncen
+EnvironmentFile=/opt/kuncen/.env
+ExecStart=/usr/bin/npx tsx services/proxy/src/index.ts
+Restart=always
+RestartSec=2
+
+# The sweeper lives in this process. If it dies the proxy dies with it, so
+# nothing can reach the GPU — the failure is total and obvious rather than
+# partial and unfair. Restart hard and fast.
+StartLimitIntervalSec=0
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/kuncen/data
+
+[Install]
+WantedBy=multi-user.target

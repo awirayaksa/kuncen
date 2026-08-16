@@ -1,0 +1,9 @@
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+data/
+.env
+.env.*
+!.env.example
+*.log
