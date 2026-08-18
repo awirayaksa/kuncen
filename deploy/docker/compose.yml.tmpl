@@ -1,0 +1,87 @@
+# kuncen — rendered by install-docker.sh into @@COMPOSE_PATH@@.
+# Edit the rendered file, not this template; re-running the installer overwrites
+# it.
+#
+# ---------------------------------------------------------------------------
+# network_mode: host is the requirement, not a shortcut.
+#
+# vLLM binds 127.0.0.1 so that the lock is a property of the network rather than
+# something our code has to get right. A bridged container reaches the host only
+# at the docker0 gateway (172.17.0.1), which a loopback-bound vLLM never answers
+# on — so bridge networking cannot work here at all. Rebinding vLLM to 172.17.0.1
+# to make it work would expose it to every container on the default bridge, which
+# is precisely the bypass the design exists to prevent.
+#
+# Sharing the host's network namespace is what lets KUNCEN_UPSTREAM stay
+# 127.0.0.1:8000 while :8080 and :3000 are still reachable from the LAN. There
+# are no port mappings below for the same reason: the services bind host
+# interfaces directly, per KUNCEN_PROXY_HOST / KUNCEN_WEB_HOST in the env file.
+# ---------------------------------------------------------------------------
+
+name: kuncen
+
+x-kuncen: &kuncen
+  image: @@IMAGE@@
+  network_mode: host
+  env_file:
+    - @@ENV_FILE@@
+  # The host's kuncen user, so the database on the bind mount is owned by
+  # something that still means anything outside the container.
+  user: "@@UID@@:@@GID@@"
+  volumes:
+    # Mounted at the same path it has on the host, so KUNCEN_DB in the env file
+    # is correct in both deployment modes and needs no override.
+    #
+    # SQLite in WAL mode with two processes on one file: this must be a local
+    # filesystem. Never NFS.
+    - @@DATA_DIR@@:@@DATA_DIR@@
+  stop_grace_period: 30s
+
+services:
+  # Runs to completion before either service starts. Migrations are append-only
+  # and versioned by PRAGMA user_version, so this is also the upgrade path.
+  migrate:
+    <<: *kuncen
+    command: ["node", "--import", "tsx", "packages/core/bin/migrate.ts"]
+    restart: "no"
+
+  proxy:
+    <<: *kuncen
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["node", "--import", "tsx", "services/proxy/src/index.ts"]
+    # The sweeper lives in this process. If it dies the proxy dies with it, so
+    # nothing can reach the GPU — the failure is total and obvious rather than
+    # partial and unfair. Restart hard and fast.
+    restart: always
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:'+(process.env.KUNCEN_PROXY_PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    <<: *kuncen
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["node", "--import", "tsx", "services/web/src/index.ts"]
+    # Restarting this one is cheap and expected — it is the half that will churn
+    # for months. Nothing here holds a streaming connection.
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:'+(process.env.KUNCEN_WEB_PORT||3000)+'/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

@@ -8,3 +8,4 @@ data/
 !.env.example
 *.log
 .wrangler/
+dist/

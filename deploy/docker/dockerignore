@@ -1,0 +1,15 @@
+# Staged to the bundle root as .dockerignore. The build context is the whole
+# bundle, and most of it is for the systemd install rather than the image.
+runtime/
+docker/base-image.tar.gz
+docker/base-image.tar
+MANIFEST.sha256
+BUNDLE.json
+README.txt
+install.sh
+install-docker.sh
+uninstall.sh
+app/node_modules/
+app/data/
+app/.env
+app/site/

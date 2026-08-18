@@ -100,15 +100,118 @@ everything else under `/v1/*` needs both.
 
 ## Deploying
 
+On a box that can reach a registry:
+
 ```sh
 sudo useradd --system --home /opt/kuncen kuncen
 sudo rsync -a --exclude node_modules ./ /opt/kuncen/
-cd /opt/kuncen && sudo -u kuncen npm ci --omit=dev
+cd /opt/kuncen && sudo -u kuncen npm ci
 sudo -u kuncen KUNCEN_DB=/opt/kuncen/data/kuncen.db npm run migrate
 
 sudo cp deploy/*.service /etc/systemd/system/
 sudo systemctl enable --now kuncen-proxy kuncen-web
 ```
+
+Not `npm ci --omit=dev`: there is no build step, both services boot through
+`tsx`, and `tsx` is a devDependency. Omitting dev dependencies produces a tree
+that installs cleanly and cannot start.
+
+### Air-gapped install
+
+The Spark usually cannot reach npmjs.org, so the install is done in two halves:
+build a bundle on a machine that has internet, carry it over, run one script.
+
+```sh
+npm run bundle                    # on the networked machine; writes dist/
+npm run bundle -- --docker        # …and the container deployment too
+                                  # --arch x64 / --node-version to override
+```
+
+That produces `dist/kuncen-offline-<version>-linux-arm64.tar.gz` (~44 MB)
+containing a Node runtime for the target, an npm cache holding every tarball in
+`package-lock.json` resolved *for linux/arm64*, the prebuilt `better-sqlite3`
+binary, the source, and the installer. Copy it across, then:
+
+```sh
+tar -xzf kuncen-offline-1.0.0-linux-arm64.tar.gz
+cd kuncen-offline-1.0.0-linux-arm64
+sudo ./install.sh                 # --prefix, --user, --no-start, --run-tests
+```
+
+`install.sh` verifies the bundle against `MANIFEST.sha256`, creates the service
+user, unpacks Node into `/opt/kuncen/runtime/node`, installs dependencies with
+`npm ci --offline --ignore-scripts`, drops the native SQLite binary in, writes
+`.env` from `.env.example` if there is none, migrates, installs the systemd
+units with `ExecStart` pointed at the bundled Node, and then actually hits
+`/healthz` on both services before claiming success. Re-run it to upgrade;
+`.env` and `data/` are never touched. `deploy/uninstall.sh` reverses it and
+keeps the database unless given `--purge`.
+
+Three things in the bundle exist because of specific failure modes:
+
+- **Optional dependencies are resolved for the target, not the build host.** A
+  plain `npm ci` on Windows caches `@esbuild/win32-x64`, and the offline install
+  on the Spark then fails with nothing to fall back on. The bundler passes
+  `--os linux --cpu arm64 --libc glibc`.
+- **`better-sqlite3` is installed with `--ignore-scripts` and its binary placed
+  by hand.** Its install script downloads a prebuild and otherwise compiles with
+  node-gyp; offline and without a toolchain, both fail. The prebuild is keyed by
+  Node's ABI (`process.versions.modules`), so the Node version in the bundle and
+  the binary are chosen together — 22.x is ABI 127. `install.sh` checks the two
+  agree before it trusts them.
+- **The runtime lives inside the prefix.** Nothing here touches the system Node,
+  npm, or apt, and the units name the interpreter by absolute path, so upgrading
+  the box's own Node cannot take the lock down.
+
+### Docker instead of systemd
+
+Same bundle, different installer. Build it with `--docker` and run:
+
+```sh
+sudo ./install-docker.sh          # --prefix, --user, --no-start, --no-cache
+sudo kuncen-admin user add you@example.com 'Your Name' --admin
+```
+
+Pick one mode or the other — both bind `:8080` and `:3000`, and each installer
+refuses to run while the other one is up. Layout is otherwise identical:
+`/opt/kuncen/.env` and `/opt/kuncen/data` on the host, mounted into the
+containers **at the same paths**, so one `.env` is correct in both modes and
+`KUNCEN_DB` needs no override. `uninstall.sh` removes whichever is installed.
+
+The image is built *on the Spark* from the bundle, not shipped as a finished
+image. The base image arrives as a `docker load`able tarball, and the build
+context carries the npm cache and the native binary, so the build reaches no
+registry. That also means the networked Windows machine only has to
+`docker pull --platform linux/arm64` the base — it never executes an arm64
+instruction, so no QEMU and no emulated `npm ci`. The build on the Spark is
+native, and it ends with two smoke tests that fail the build rather than the
+first request: `better-sqlite3` loading, and `tsx` loading.
+
+**`network_mode: host` is the requirement, not a shortcut.** vLLM binds
+`127.0.0.1` so that the lock is a property of the network rather than something
+our code has to get right. A bridged container reaches the host only at the
+`docker0` gateway (`172.17.0.1`), which a loopback-bound vLLM never answers on —
+bridge networking cannot work here at all. Rebinding vLLM to `172.17.0.1` to
+make it work would expose it to every container on the default bridge, which is
+exactly the bypass the design exists to prevent. Sharing the host's network
+namespace is what lets `KUNCEN_UPSTREAM` stay `http://127.0.0.1:8000` while
+`:8080` and `:3000` are still reachable from the LAN, and it is why there are no
+port mappings in the compose file: the services bind host interfaces directly,
+per `KUNCEN_PROXY_HOST` / `KUNCEN_WEB_HOST`.
+
+Two smaller things that follow from the same reasoning:
+
+- **The containers run as the host's `kuncen` uid**, not as root and not as the
+  image's `node` user, so `kuncen.db` on the bind mount is owned by something
+  that still means something on the host. The installer reads the uid after
+  creating the account and renders it into the compose file.
+- **`migrate` is a one-shot service** the other two `depend_on` with
+  `service_completed_successfully`. It does not re-run when the daemon restarts
+  containers after a reboot, which is correct — the schema is already at version
+  by then — but it does re-run on every `compose up`, which is the upgrade.
+
+The bind mount must be a local filesystem. SQLite in WAL mode with two processes
+on one file over NFS is a corrupted database waiting for a quiet afternoon.
 
 **Enforcement integrity — non-negotiable, or the lock is decorative:**
 

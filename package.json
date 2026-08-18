@@ -16,6 +16,7 @@
     "dev": "node --import tsx tools/dev.ts",
     "dev:proxy": "node --env-file-if-exists=.env --watch --import tsx services/proxy/src/index.ts",
     "dev:web": "node --env-file-if-exists=.env --watch --import tsx services/web/src/index.ts",
+    "bundle": "node tools/offline-bundle.mjs",
     "dev:fake-vllm": "node --env-file-if-exists=.env --import tsx tools/fake-vllm.ts",
     "test": "node --import tsx --test packages/core/test/*.test.ts services/proxy/test/*.test.ts services/web/test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
